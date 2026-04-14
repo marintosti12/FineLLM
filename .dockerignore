@@ -1,0 +1,30 @@
+.git
+.github
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Donnees et artefacts lourds
+data/
+outputs/
+kaggle_upload/
+notebooks/
+docs/
+tests/
+scripts/
+
+# Poetry / env
+poetry.lock
+pyproject.toml
+.env
+.env.*
+
+# Editeur
+.vscode
+.idea
+*.swp

@@ -1,0 +1,13 @@
+# Dependances runtime minimales pour l'image Docker du Space HF.
+# Volontairement separe de pyproject.toml (qui embarque aussi le training).
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pyyaml==6.0.2
+
+# Backend d'inference (vLLM sur GPU Space, transformers en fallback)
+vllm==0.6.6
+transformers==4.47.1
+accelerate==1.2.1
+huggingface_hub==0.27.0

@@ -1,0 +1,34 @@
+# Configuration déploiement — vLLM + FastAPI
+# Endpoint de démonstration pour le triage médical
+
+vllm:
+  model: "outputs/dpo/final"
+  tensor_parallel_size: 1
+  max_model_len: 2048
+  gpu_memory_utilization: 0.9
+  dtype: "bfloat16"
+
+inference:
+  temperature: 0.3
+  top_p: 0.9
+  max_tokens: 512
+  repetition_penalty: 1.1
+
+triage:
+  system_prompt: |
+    Vous êtes un agent médical IA spécialisé dans le triage des urgences au Centre Hospitalier Saint-Aurélien.
+    Votre rôle est d'évaluer le niveau de priorité des patients selon leurs symptômes, antécédents et constantes vitales.
+
+    Niveaux de priorité :
+    - P1 - URGENCE MAXIMALE : Mise en jeu du pronostic vital, prise en charge immédiate
+    - P2 - URGENCE MODÉRÉE : État sérieux nécessitant une prise en charge rapide (< 30 min)
+    - P3 - URGENCE DIFFÉRÉE : État stable, consultation programmable
+
+    Pour chaque patient, vous devez :
+    1. Évaluer le niveau de priorité (P1, P2 ou P3)
+    2. Justifier votre évaluation
+    3. Formuler des recommandations pour la prise en charge
+
+server:
+  host: "0.0.0.0"
+  port: 8000

@@ -1,0 +1,56 @@
+name: Deploy to HF Space
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-space
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    needs: []
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install huggingface_hub
+        run: pip install "huggingface_hub>=0.27"
+
+      - name: Stage Space files
+        run: |
+          mkdir -p space_upload
+          cp Dockerfile space_upload/
+          cp requirements-deploy.txt space_upload/
+          cp README_SPACE.md space_upload/README.md
+          cp -r src space_upload/src
+          cp -r configs space_upload/configs
+          # Retire training/data/eval du bundle envoye au Space
+          rm -rf space_upload/src/training space_upload/src/data space_upload/src/evaluation
+          find space_upload -name "__pycache__" -type d -exec rm -rf {} +
+
+      - name: Upload to HF Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          SPACE_REPO: Marintosti/chsa-triage-api
+        run: |
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          api.upload_folder(
+              folder_path="space_upload",
+              repo_id=os.environ["SPACE_REPO"],
+              repo_type="space",
+              commit_message=f"ci: deploy {os.environ.get('GITHUB_SHA','')[:7]}",
+          )
+          print("Space updated:", os.environ["SPACE_REPO"])
+          PY
