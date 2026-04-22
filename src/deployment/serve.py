@@ -6,8 +6,12 @@ API FastAPI de triage medical. Backend d'inference:
 - transformers sinon (CPU, fallback / tests CI)
 - mode echo si USE_VLLM=0 ET MODEL_ID vide (tests unitaires)
 
+Support adapters LoRA (PEFT) via ADAPTER_ID si le MODEL_ID pointe sur le base
+et qu'on souhaite appliquer un adapter LoRA.
+
 Variables d'environnement:
-- MODEL_ID        : id du modele HF Hub (ex: Marintosti/chsa-triage-qwen3-1.7b)
+- MODEL_ID        : id du modele HF Hub (ex: Qwen/Qwen3-1.7B-Base ou Marintosti/chsa-triage-merged)
+- ADAPTER_ID      : chemin/id d'un adapter PEFT a appliquer sur MODEL_ID (optionnel)
 - USE_VLLM        : "1" pour charger vLLM, "0" pour transformers/mock (default: "1")
 - API_KEY         : si defini, exige le header X-API-Key
 - PORT            : port d'ecoute (default: 7860 - requis par HF Spaces)
@@ -17,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -38,6 +43,7 @@ with open(CONFIG_PATH) as f:
     config = yaml.safe_load(f)
 
 MODEL_ID = os.environ.get("MODEL_ID", "").strip()
+ADAPTER_ID = os.environ.get("ADAPTER_ID", "").strip()
 USE_VLLM = os.environ.get("USE_VLLM", "1") == "1"
 API_KEY = os.environ.get("API_KEY", "").strip()
 
@@ -61,24 +67,35 @@ def _load_vllm(model_id: str) -> None:
     logger.info("Backend vLLM charge: %s", model_id)
 
 
-def _load_transformers(model_id: str) -> None:
+def _load_transformers(model_id: str, adapter_id: str = "") -> None:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = torch.bfloat16 if device == "cuda" else torch.float32
+
+    # Tokenizer : si un adapter est fourni, priviliegier son tokenizer (contient le bon chat_template)
+    tok_src = adapter_id or model_id
+    tok = AutoTokenizer.from_pretrained(tok_src, trust_remote_code=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
+
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
-        torch_dtype=torch.float32,
-        device_map="cpu",
+        torch_dtype=dtype,
+        device_map=device,
         trust_remote_code=True,
     )
+    if adapter_id:
+        from peft import PeftModel  # type: ignore
+        model = PeftModel.from_pretrained(model, adapter_id)
+        logger.info("Adapter LoRA applique: %s", adapter_id)
+
     model.eval()
     _backend["engine"] = model
     _backend["tokenizer"] = tok
     _backend["kind"] = "transformers"
-    logger.info("Backend transformers (CPU) charge: %s", model_id)
+    logger.info("Backend transformers (%s) charge: %s", device, model_id)
 
 
 @asynccontextmanager
@@ -90,7 +107,7 @@ async def lifespan(app: FastAPI):
             if USE_VLLM:
                 _load_vllm(MODEL_ID)
             else:
-                _load_transformers(MODEL_ID)
+                _load_transformers(MODEL_ID, ADAPTER_ID)
         except Exception as exc:  # noqa: BLE001
             logger.error("Echec chargement modele (%s), bascule en mode mock: %s", MODEL_ID, exc)
     yield
@@ -144,7 +161,7 @@ def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
 
 
 def build_prompt(req: TriageRequest) -> str:
-    system_prompt = config["triage"]["system_prompt"]
+    """Construit la requete patient en texte brut (pour vLLM)."""
     parts = [f"Symptomes rapportes: {req.symptoms}"]
     if req.age is not None:
         parts.append(f"Age: {req.age} ans")
@@ -155,40 +172,101 @@ def build_prompt(req: TriageRequest) -> str:
     if req.vital_signs:
         vitals = ", ".join(f"{k}: {v}" for k, v in req.vital_signs.items())
         parts.append(f"Constantes vitales: {vitals}")
-    parts.append("\nVeuillez evaluer le niveau de priorite et fournir vos recommandations.")
-    return f"{system_prompt}\n\nPatient:\n" + "\n".join(parts)
+    parts.append("Veuillez evaluer le niveau de priorite (P1, P2 ou P3) et fournir vos recommandations.")
+    return "\n".join(parts)
+
+
+def build_chat_messages(req: TriageRequest) -> list[dict]:
+    """Format ChatML (aligne avec le SFT/DPO)."""
+    return [
+        {"role": "system", "content": config["triage"]["system_prompt"]},
+        {"role": "user", "content": build_prompt(req)},
+    ]
+
+
+# --- Nettoyage des artefacts de generation (preifixe multilingue, leak MCQ) ---
+
+# Caracteres autorises en sortie : latin + ponctuation + espaces + chiffres + accents
+# Tout ce qui n'est pas dans cet intervalle est considere comme un artefact de generation
+# (chinois, thai, arabe, etc. que Qwen3-Base peut generer en premier token).
+_NON_LATIN = re.compile(r"[^\x00-\x7FÀ-ɏ -⁯₠-⃏∀-⋿]+")
+_STOP_PATTERNS = [
+    "\nQuestion :",
+    "\nQuestion:",
+    "\nChoix possibles",
+    "\nCas clinique :",
+    "\n<|im_end|>",
+    "<|im_end|>",
+    "<|im_start|>",
+    "\nuser\n",
+    "\nUSER\n",
+]
+
+
+def clean_response(raw: str) -> str:
+    """Strip les artefacts du modele Base + coupe au premier leak de format MCQ."""
+    # 1. Strip les caracteres non-latins au debut (prefixe thai/chinois/arabe)
+    raw = _NON_LATIN.sub("", raw)
+    # 2. Couper au premier "leak" du format training (nouvelle question, tokens chat, etc.)
+    for stop in _STOP_PATTERNS:
+        idx = raw.find(stop)
+        if idx > 0:
+            raw = raw[:idx]
+    return raw.strip()
 
 
 def parse_triage_response(raw: str) -> tuple[str, str, str]:
-    raw_upper = raw.upper()
-    if "P1" in raw_upper or "URGENCE MAXIMALE" in raw_upper:
+    """Nettoie puis detecte le niveau de priorite dans la reponse."""
+    cleaned = clean_response(raw)
+    upper = cleaned.upper()
+
+    # Detection du niveau de priorite (mots-cles + mentions explicites P1/P2/P3)
+    if ("P1" in upper
+        or "URGENCE MAXIMALE" in upper
+        or "PRONOSTIC VITAL" in upper
+        or "INFARCTUS" in upper
+        or "CHOC ANAPHYLACTIQUE" in upper):
         priority = "P1 - URGENCE MAXIMALE"
-    elif "P2" in raw_upper or "URGENCE MODEREE" in raw_upper or "URGENCE MODÉRÉE" in raw_upper:
+    elif ("P2" in upper
+          or "URGENCE MODEREE" in upper
+          or "URGENCE MODÉRÉE" in upper
+          or "PRISE EN CHARGE RAPIDE" in upper):
         priority = "P2 - URGENCE MODEREE"
-    elif "P3" in raw_upper or "URGENCE DIFFEREE" in raw_upper or "URGENCE DIFFÉRÉE" in raw_upper:
+    elif ("P3" in upper
+          or "URGENCE DIFFEREE" in upper
+          or "URGENCE DIFFÉRÉE" in upper
+          or "CONSULTATION PROGRAMMABLE" in upper):
         priority = "P3 - URGENCE DIFFEREE"
     else:
         priority = "NON DETERMINE"
-    return priority, raw.strip(), ""
+
+    return priority, cleaned, ""
 
 
 # ---------------------------- Inference ----------------------------
 
 
-def _generate(prompt: str) -> str:
+def _generate(req: TriageRequest) -> str:
     kind = _backend["kind"]
     inf = config["inference"]
+    messages = build_chat_messages(req)
 
     if kind == "vllm":
         from vllm import SamplingParams  # type: ignore
+
+        # Applique le chat template Qwen3 via le tokenizer de vLLM
+        llm = _backend["engine"]
+        tok = llm.get_tokenizer()
+        prompt = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
         params = SamplingParams(
             temperature=inf["temperature"],
             top_p=inf["top_p"],
             max_tokens=inf["max_tokens"],
             repetition_penalty=inf["repetition_penalty"],
+            stop=["<|im_end|>", "\nQuestion :", "\nChoix possibles"],
         )
-        out = _backend["engine"].generate([prompt], params)
+        out = llm.generate([prompt], params)
         return out[0].outputs[0].text
 
     if kind == "transformers":
@@ -196,16 +274,23 @@ def _generate(prompt: str) -> str:
 
         tok = _backend["tokenizer"]
         model = _backend["engine"]
-        inputs = tok(prompt, return_tensors="pt", truncation=True, max_length=config["vllm"]["max_model_len"])
+
+        # Chat template ChatML (aligne avec l'entrainement SFT/DPO)
+        text = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = tok(text, return_tensors="pt", truncation=True, max_length=2048).to(model.device)
+
         with torch.no_grad():
             out = model.generate(
                 **inputs,
                 max_new_tokens=inf["max_tokens"],
                 temperature=inf["temperature"],
                 top_p=inf["top_p"],
+                top_k=50,
                 repetition_penalty=inf["repetition_penalty"],
+                no_repeat_ngram_size=4,
                 do_sample=True,
                 pad_token_id=tok.pad_token_id,
+                eos_token_id=tok.eos_token_id,
             )
         return tok.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
 
@@ -243,11 +328,10 @@ async def health():
 async def triage(req: TriageRequest):
     interaction_id = str(uuid.uuid4())
     timestamp = datetime.now(tz=timezone.utc).isoformat()
-    prompt = build_prompt(req)
 
     t0 = time.perf_counter()
     try:
-        raw = _generate(prompt)
+        raw = _generate(req)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Erreur inference")
         raise HTTPException(status_code=500, detail=f"Inference error: {exc}") from exc

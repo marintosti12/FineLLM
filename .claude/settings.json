@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(PYTHONPATH=. USE_VLLM=0 python -m pytest tests/test_serve.py -q)"
+    ]
+  }
+}

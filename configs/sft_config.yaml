@@ -12,8 +12,8 @@ data:
   max_samples: 5000
 
 lora:
-  r: 16
-  lora_alpha: 32
+  r: 32 # augmenté de 16 → 32 : plus de capacité pour apprendre le français médical
+  lora_alpha: 64 # alpha = 2*r (ratio alpha/r = 2, scaling standard)
   lora_dropout: 0.05
   target_modules:
     - "q_proj"
@@ -23,6 +23,8 @@ lora:
     - "gate_proj"
     - "up_proj"
     - "down_proj"
+  # NB : pas de modules_to_save (plus rapide, moins de VRAM).
+  # Le biais chinois de Qwen3-Base est compensé à l'inférence via sampling + repetition_penalty.
 
 training:
   output_dir: "outputs/sft"

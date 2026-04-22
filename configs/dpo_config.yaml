@@ -9,10 +9,12 @@ model:
 data:
   train_file: "data/dpo/train.jsonl"
   eval_file: "data/dpo/eval.jsonl"
+  max_samples: 15000   # null pour tout prendre (~61k, 2-3h de training sur A100)
+  max_eval_samples: 1000
 
 lora:
-  r: 16
-  lora_alpha: 32
+  r: 32
+  lora_alpha: 64
   lora_dropout: 0.05
   target_modules:
     - "q_proj"
