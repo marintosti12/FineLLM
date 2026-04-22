@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     HF_HOME=/home/user/.cache/huggingface \
     PORT=7860 \
-    USE_VLLM=1
+    USE_VLLM=0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3.11 python3.11-venv python3-pip git curl \

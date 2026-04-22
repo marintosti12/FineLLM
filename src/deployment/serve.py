@@ -31,6 +31,7 @@ from typing import Any
 
 import yaml
 from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -120,6 +121,17 @@ app = FastAPI(
     description="POC d'un agent IA de triage medical pour le Centre Hospitalier Saint-Aurelien",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+# CORS : autoriser les appels depuis la page de demo (file://, github pages, etc.)
+# Pour un POC de demonstration, on autorise toutes les origines. En production,
+# restreindre a la liste des domaines hospitaliers autorises.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 

@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CHSA — Démo Agent IA de Triage Médical</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 100%);
+    min-height: 100vh;
+    color: #1e293b;
+    padding: 20px;
+  }
+  .container {
+    max-width: 1000px;
+    margin: 0 auto;
+  }
+  header {
+    background: white;
+    padding: 24px 32px;
+    border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+  .logo {
+    width: 56px;
+    height: 56px;
+    background: #dc2626;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 28px;
+    font-weight: bold;
+  }
+  h1 {
+    font-size: 22px;
+    color: #0f172a;
+  }
+  .subtitle {
+    font-size: 14px;
+    color: #64748b;
+    margin-top: 4px;
+  }
+  .config-bar {
+    background: white;
+    padding: 16px 24px;
+    border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    margin-bottom: 20px;
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .config-bar label {
+    font-size: 12px;
+    color: #475569;
+    font-weight: 500;
+  }
+  .config-bar input {
+    padding: 8px 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: monospace;
+    min-width: 250px;
+  }
+  .status-indicator {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 6px;
+  }
+  .status-ok { background: #22c55e; }
+  .status-ko { background: #ef4444; }
+  .status-unknown { background: #94a3b8; }
+
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 768px) {
+    .main-grid { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: white;
+    padding: 24px;
+    border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+  }
+  .panel h2 {
+    font-size: 16px;
+    margin-bottom: 16px;
+    color: #0f172a;
+    border-bottom: 2px solid #e2e8f0;
+    padding-bottom: 8px;
+  }
+
+  .examples {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .example-btn {
+    padding: 8px 14px;
+    border: 1px solid #cbd5e1;
+    border-radius: 20px;
+    background: #f8fafc;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .example-btn:hover {
+    background: #e0f2fe;
+    border-color: #3b82f6;
+  }
+  .example-btn.p1 { border-color: #fca5a5; color: #991b1b; }
+  .example-btn.p2 { border-color: #fcd34d; color: #92400e; }
+  .example-btn.p3 { border-color: #86efac; color: #166534; }
+
+  .form-group { margin-bottom: 14px; }
+  .form-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: #334155;
+    margin-bottom: 4px;
+  }
+  .form-group textarea, .form-group input, .form-group select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+  }
+  .form-group textarea {
+    min-height: 90px;
+    resize: vertical;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .row-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+  .btn-primary {
+    width: 100%;
+    padding: 12px;
+    background: #dc2626;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .btn-primary:hover { background: #b91c1c; }
+  .btn-primary:disabled { background: #cbd5e1; cursor: not-allowed; }
+
+  .result {
+    min-height: 200px;
+  }
+  .empty-state {
+    color: #94a3b8;
+    font-size: 14px;
+    text-align: center;
+    padding: 40px 20px;
+  }
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    gap: 12px;
+    color: #475569;
+  }
+  .spinner {
+    width: 24px;
+    height: 24px;
+    border: 3px solid #e2e8f0;
+    border-top-color: #dc2626;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .priority-badge {
+    display: inline-block;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+  .priority-P1 { background: #fee2e2; color: #991b1b; border: 2px solid #dc2626; }
+  .priority-P2 { background: #fef3c7; color: #92400e; border: 2px solid #f59e0b; }
+  .priority-P3 { background: #d1fae5; color: #166534; border: 2px solid #22c55e; }
+  .priority-NON { background: #f1f5f9; color: #475569; border: 2px solid #94a3b8; }
+
+  .response-box {
+    background: #f8fafc;
+    padding: 16px;
+    border-radius: 8px;
+    border-left: 4px solid #3b82f6;
+    font-size: 14px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  .meta {
+    margin-top: 12px;
+    font-size: 12px;
+    color: #64748b;
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .meta span strong { color: #0f172a; }
+
+  .history {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid #e2e8f0;
+  }
+  .history h3 {
+    font-size: 13px;
+    color: #64748b;
+    margin-bottom: 8px;
+  }
+  .history-item {
+    padding: 8px 12px;
+    background: #f8fafc;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    font-size: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .history-item .pill {
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  footer {
+    text-align: center;
+    padding: 20px;
+    color: #64748b;
+    font-size: 12px;
+    margin-top: 20px;
+  }
+  .warning {
+    background: #fef3c7;
+    border-left: 4px solid #f59e0b;
+    padding: 12px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    margin-top: 16px;
+    color: #78350f;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="logo">+</div>
+    <div>
+      <h1>CHSA — Agent IA de Triage Médical</h1>
+      <div class="subtitle">POC Phase 1 · Qwen3-1.7B-Base · SFT + LoRA</div>
+    </div>
+  </header>
+
+  <div class="config-bar">
+    <label>API URL :
+      <input type="text" id="api-url" value="https://marintosti-chsa-triage-api.hf.space">
+    </label>
+    <label>API Key :
+      <input type="password" id="api-key" value="123456">
+    </label>
+    <div>
+      <span id="status-dot" class="status-indicator status-unknown"></span>
+      <span id="status-text">Statut inconnu</span>
+      <button class="example-btn" onclick="checkHealth()">Vérifier</button>
+    </div>
+  </div>
+
+  <div class="main-grid">
+
+    <!-- COLONNE GAUCHE : Formulaire -->
+    <div class="panel">
+      <h2>Dossier patient</h2>
+
+      <div class="examples">
+        <button class="example-btn p1" onclick="loadCase('infarctus')">🔴 Infarctus (P1)</button>
+        <button class="example-btn p1" onclick="loadCase('anaphylaxie')">🔴 Choc anaphylactique (P1)</button>
+        <button class="example-btn p2" onclick="loadCase('appendicite')">🟡 Appendicite (P2)</button>
+        <button class="example-btn p3" onclick="loadCase('angine')">🟢 Angine (P3)</button>
+        <button class="example-btn p3" onclick="loadCase('entorse')">🟢 Entorse cheville (P3)</button>
+      </div>
+
+      <form id="triage-form">
+        <div class="form-group">
+          <label for="symptoms">Symptômes rapportés *</label>
+          <textarea id="symptoms" required placeholder="Décrivez les symptômes, leur durée, leur intensité..."></textarea>
+        </div>
+
+        <div class="row-3">
+          <div class="form-group">
+            <label for="age">Âge</label>
+            <input type="number" id="age" min="0" max="120">
+          </div>
+          <div class="form-group">
+            <label for="sex">Sexe</label>
+            <select id="sex">
+              <option value="">—</option>
+              <option value="M">Homme</option>
+              <option value="F">Femme</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="patient-id">ID patient</label>
+            <input type="text" id="patient-id" placeholder="PAT-001">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="medical-history">Antécédents médicaux</label>
+          <input type="text" id="medical-history" placeholder="HTA, diabète type 2, ...">
+        </div>
+
+        <div class="row-3">
+          <div class="form-group">
+            <label for="fc">Fréq. cardiaque</label>
+            <input type="number" id="fc" placeholder="bpm">
+          </div>
+          <div class="form-group">
+            <label for="ta">Tension artérielle</label>
+            <input type="text" id="ta" placeholder="120/80">
+          </div>
+          <div class="form-group">
+            <label for="spo2">SpO2</label>
+            <input type="number" id="spo2" placeholder="%">
+          </div>
+        </div>
+
+        <button type="submit" class="btn-primary" id="submit-btn">
+          Évaluer la priorité
+        </button>
+      </form>
+
+      <div class="warning">
+        ⚠️ Outil d'aide à la décision — ne remplace pas un jugement clinique humain.
+      </div>
+    </div>
+
+    <!-- COLONNE DROITE : Résultat -->
+    <div class="panel">
+      <h2>Évaluation de l'agent</h2>
+      <div class="result" id="result">
+        <div class="empty-state">
+          Remplissez le dossier patient et cliquez sur "Évaluer la priorité".<br>
+          <small>Ou sélectionnez un cas type ci-contre.</small>
+        </div>
+      </div>
+
+      <div class="history" id="history-section" style="display:none;">
+        <h3>Historique de cette session</h3>
+        <div id="history-list"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>
+    CHSA · Centre Hospitalier Saint-Aurélien · POC Agent IA de Triage · v0.1.0
+  </footer>
+</div>
+
+<script>
+  // --- Cas cliniques types ---
+  const CASES = {
+    infarctus: {
+      symptoms: "Douleur thoracique aigüe irradiant au bras gauche, sueurs froides, depuis 30 minutes",
+      age: 58, sex: "M", "patient-id": "PAT-2026-0422-001",
+      "medical-history": "Hypertension, ancien fumeur 30 paquets-années",
+      fc: 112, ta: "150/95", spo2: 94,
+    },
+    anaphylaxie: {
+      symptoms: "Éruption cutanée diffuse, œdème des lèvres, dyspnée apparue 1h après ingestion de cacahuètes",
+      age: 3, sex: "F", "patient-id": "PAT-2026-0422-002",
+      "medical-history": "Terrain atopique, eczéma du nourrisson",
+      fc: 140, ta: "", spo2: 91,
+    },
+    appendicite: {
+      symptoms: "Douleur abdominale en fosse iliaque droite depuis 12h, nausées, fièvre modérée",
+      age: 22, sex: "F", "patient-id": "PAT-2026-0422-003",
+      "medical-history": "Néant",
+      fc: 98, ta: "125/78", spo2: 99,
+    },
+    angine: {
+      symptoms: "Mal de gorge depuis 2 jours, déglutition douloureuse, fièvre légère",
+      age: 30, sex: "F", "patient-id": "PAT-2026-0422-004",
+      "medical-history": "Néant",
+      fc: 85, ta: "118/75", spo2: 99,
+    },
+    entorse: {
+      symptoms: "Douleur cheville droite après chute à la course, légère tuméfaction, appui partiel possible",
+      age: 25, sex: "M", "patient-id": "PAT-2026-0422-005",
+      "medical-history": "Sportif régulier, pas d'antécédent",
+      fc: 78, ta: "125/80", spo2: 100,
+    },
+  };
+
+  function loadCase(key) {
+    const c = CASES[key];
+    for (const [field, val] of Object.entries(c)) {
+      const el = document.getElementById(field);
+      if (el) el.value = val ?? "";
+    }
+  }
+
+  // --- Health check ---
+  async function checkHealth() {
+    const dot = document.getElementById("status-dot");
+    const text = document.getElementById("status-text");
+    const url = document.getElementById("api-url").value.replace(/\/$/, "");
+    dot.className = "status-indicator status-unknown";
+    text.textContent = "Vérification...";
+    try {
+      const r = await fetch(url + "/health");
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const body = await r.json();
+      if (body.backend === "mock") {
+        dot.className = "status-indicator status-ko";
+        text.textContent = "API en mode MOCK (aucun modèle chargé)";
+      } else {
+        dot.className = "status-indicator status-ok";
+        text.textContent = `API OK — backend : ${body.backend}`;
+      }
+    } catch (e) {
+      dot.className = "status-indicator status-ko";
+      text.textContent = "API inaccessible";
+    }
+  }
+
+  // --- Soumission du formulaire ---
+  const history = [];
+
+  document.getElementById("triage-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const url = document.getElementById("api-url").value.replace(/\/$/, "");
+    const key = document.getElementById("api-key").value;
+
+    const vitals = {};
+    const fc = document.getElementById("fc").value;
+    const ta = document.getElementById("ta").value;
+    const spo2 = document.getElementById("spo2").value;
+    if (fc) vitals.fc = parseInt(fc);
+    if (ta) vitals.ta = ta;
+    if (spo2) vitals.spo2 = parseInt(spo2);
+
+    const payload = {
+      patient_id: document.getElementById("patient-id").value || null,
+      symptoms: document.getElementById("symptoms").value,
+      age: parseInt(document.getElementById("age").value) || null,
+      sex: document.getElementById("sex").value || null,
+      medical_history: document.getElementById("medical-history").value || null,
+      vital_signs: Object.keys(vitals).length ? vitals : null,
+    };
+
+    const btn = document.getElementById("submit-btn");
+    const resultBox = document.getElementById("result");
+    btn.disabled = true;
+    btn.textContent = "Analyse en cours...";
+    resultBox.innerHTML = '<div class="loading"><div class="spinner"></div><div>L\'agent analyse le dossier...</div></div>';
+
+    const t0 = performance.now();
+    try {
+      const r = await fetch(url + "/triage", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": key,
+        },
+        body: JSON.stringify(payload),
+      });
+      const dt = (performance.now() - t0).toFixed(0);
+
+      if (!r.ok) {
+        const txt = await r.text();
+        resultBox.innerHTML = `<div class="empty-state" style="color:#991b1b;">
+          Erreur HTTP ${r.status}<br><small>${escapeHtml(txt)}</small>
+        </div>`;
+        return;
+      }
+
+      const body = await r.json();
+      renderResult(body, dt);
+      addToHistory(body, payload);
+    } catch (err) {
+      resultBox.innerHTML = `<div class="empty-state" style="color:#991b1b;">
+        Erreur réseau : ${escapeHtml(err.message)}<br>
+        <small>L'API est-elle accessible ? Vérifiez l'URL.</small>
+      </div>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Évaluer la priorité";
+    }
+  });
+
+  function renderResult(body, clientLatency) {
+    const priority = body.priority_level || "NON DETERMINE";
+    const priorityClass = priority.startsWith("P1") ? "P1"
+                        : priority.startsWith("P2") ? "P2"
+                        : priority.startsWith("P3") ? "P3" : "NON";
+
+    const resultBox = document.getElementById("result");
+    resultBox.innerHTML = `
+      <div class="priority-badge priority-${priorityClass}">${escapeHtml(priority)}</div>
+      <div class="response-box">${escapeHtml(body.explanation || "(aucune explication)")}</div>
+      <div class="meta">
+        <span><strong>Latence serveur :</strong> ${body.latency_ms} ms</span>
+        <span><strong>Latence totale :</strong> ${clientLatency} ms</span>
+        <span><strong>Backend :</strong> ${escapeHtml(body.backend)}</span>
+        <span><strong>ID interaction :</strong> <code>${escapeHtml((body.interaction_id || "").slice(0, 8))}...</code></span>
+      </div>
+    `;
+  }
+
+  function addToHistory(body, payload) {
+    history.unshift({ body, payload, ts: new Date() });
+    const section = document.getElementById("history-section");
+    const list = document.getElementById("history-list");
+    section.style.display = "block";
+    list.innerHTML = history.slice(0, 6).map(h => {
+      const p = h.body.priority_level || "NON";
+      const cls = p.startsWith("P1") ? "P1" : p.startsWith("P2") ? "P2" : p.startsWith("P3") ? "P3" : "NON";
+      const bg = cls === "P1" ? "#fee2e2" : cls === "P2" ? "#fef3c7" : cls === "P3" ? "#d1fae5" : "#f1f5f9";
+      const col = cls === "P1" ? "#991b1b" : cls === "P2" ? "#92400e" : cls === "P3" ? "#166534" : "#475569";
+      const time = h.ts.toLocaleTimeString("fr-FR", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+      return `<div class="history-item">
+        <span>${time} · ${escapeHtml((h.payload.symptoms || "").slice(0, 50))}...</span>
+        <span class="pill" style="background:${bg};color:${col};">${escapeHtml(p)}</span>
+      </div>`;
+    }).join("");
+  }
+
+  function escapeHtml(s) {
+    if (s == null) return "";
+    return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+  }
+
+  // Health check au chargement
+  window.addEventListener("load", checkHealth);
+</script>
+</body>
+</html>
