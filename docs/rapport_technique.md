@@ -168,7 +168,18 @@ Approche 2 (OK) : "Le patient Michel Bernard, Marseille, douleurs thoraciques."
 
 Sous-échantillonnage pour le POC : DPO limité à **15 000 paires** en training (compromise qualité/temps).
 
-**Rapport d'anonymisation** : *[TODO : insérer le rapport final du fichier `data/raw/anonymization_report.json` — entités détectées par type et par dataset]*
+**Rapport d'anonymisation** (extrait de `data/raw/anonymization_report.json`) :
+
+| Source | Langue | Exemples | Entités PERSON | Entités LOCATION | Total |
+|---|---|---|---|---|---|
+| `mediqal_mcqu.jsonl` | FR | 10 113 | 6 567 | 7 426 | 13 993 |
+| `mediqal_mcqm.jsonl` | FR | 5 767 | 3 600 | 4 387 | 7 987 |
+| `mediqal_oeq.jsonl` | FR | 4 969 | 7 391 | 7 128 | 14 519 |
+| `frenchmedmcqa.jsonl` | FR | 2 171 | 866 | 1 062 | 1 928 |
+| `medquad.jsonl` | EN | — | 0 | 0 | 0 *(corpus académique non patient)* |
+| `ultramedical_preference.jsonl` | EN | — | 0 | 0 | 0 *(corpus académique non patient)* |
+
+**Total** : 38 427 entités identifiantes substituées par des valeurs Faker fr_FR, sur l'ensemble des corpus francophones. Les corpus anglophones (MedQuAD, UltraMedical) sont issus de questions médicales académiques et ne contiennent pas de PII patient — anonymisation non nécessaire.
 
 Le dataset final est publié sur Hugging Face Hub (repo privé) :
 `Marintosti/chsa-medical-data`
@@ -361,35 +372,51 @@ LoRA réinitialisé (r=32, mêmes target_modules) sur le modèle SFT figé.
 
 ### 6.4 Sécurité et traçabilité
 
-- **Authentification** : header `X-API-Key` (rotation possible via variable d'environnement)
-- **Audit log** : chaque interaction est persistée avec horodatage UTC, `patient_id`, symptômes, priorité attribuée, latence
-- **Anonymisation** : les données en mémoire ne sont pas stockées à long terme (conformité RGPD)
-- **Monitoring** : latence p50/p95/p99 via logs applicatifs
+- **Authentification** : header `X-API-Key` (rotation possible via variable d'environnement `API_KEY`).
+- **Audit log persistant** : chaque interaction est écrite en append-only dans un fichier JSONL (`AUDIT_LOG_PATH`, défaut : `audit/audit.jsonl`). L'historique est rechargé en mémoire au démarrage, ce qui garantit la traçabilité même après redéploiement. Champs persistés : `interaction_id` (UUIDv4), `timestamp` UTC, `patient_id`, `symptoms`, `priority_level`, `latency_ms`, `backend`.
+- **Pseudo-anonymisation amont** : les données d'entraînement ont été anonymisées via Faker (cf. §3.3) — aucune donnée patient identifiante n'a été apprise par le modèle.
+- **Pas de logs PII en clair** : les requêtes `/triage` ne loguent que l'`interaction_id` et le niveau de priorité, pas les symptômes.
+- **CORS** : ouvert pour la démo, à restreindre à la liste d'origines hospitalières en production.
+- **Monitoring** : la latence est mesurée côté serveur (champ `latency_ms` de chaque réponse) et côté client (cf. §7.2 et `scripts/bench_latency.py`).
 
 ### 6.5 Tests automatisés
 
-Tests d'intégration `pytest` en mode mock (CI sans GPU) :
-- Health check
-- Schéma de requête invalide (400)
-- Requête valide (200 + priorité renvoyée)
-- API key invalide (401)
-- Audit log incrémenté
+Tests d'intégration `pytest` en mode mock (CI sans GPU), 8 tests dans `tests/test_serve.py` :
 
-Voir `tests/test_serve.py`.
+| Test | Couverture |
+|---|---|
+| `test_root` | Métadonnées du service (`GET /`) |
+| `test_health` | Healthcheck + statut backend |
+| `test_triage_basic` | Requête nominale + champs de la réponse |
+| `test_triage_required_field` | Validation Pydantic (HTTP 422 sur payload vide) |
+| `test_audit_traceability` | `/audit` expose toutes les interactions |
+| `test_audit_persisted_to_jsonl` | Vérifie l'écriture JSONL append-only sur disque |
+| `test_latency_threshold` | Mode mock < 500 ms |
+| `test_api_key_enforcement` | 401 si clé invalide / 200 si clé valide |
+
+Tous les tests passent en CI (cf. workflow `ci.yml`).
 
 ### 6.6 Pipeline CI/CD GitHub Actions
 
-Deux workflows :
+Deux workflows complémentaires :
 
-**`ci.yml`** (sur push/PR `main`) :
-1. Lint `ruff` sur le code de déploiement et les tests
-2. Tests `pytest` en mode mock (pas de GPU requis)
-3. Build Docker de sanité
+**`ci.yml`** (déclenché sur `push` et `pull_request` vers `main`) :
+1. Setup Python 3.12 avec cache pip
+2. Installation des dépendances runtime + test (FastAPI, pytest, ruff)
+3. `ruff check src/deployment tests/test_serve.py` — qualité de code
+4. `pytest tests/test_serve.py -q` en mode mock (pas de GPU)
+5. `docker build` de l'image Docker (sanity check du Dockerfile)
 
-**`deploy-space.yml`** (sur release ou déclenchement manuel) :
-1. Build de l'image Docker
-2. Push de l'image sur HuggingFace Spaces
-3. Trigger du redéploiement du Space
+**`deploy-space.yml`** (sur `push main` et `workflow_dispatch`) :
+1. Concurrency lock (`group: deploy-space`) pour éviter les déploiements concurrents
+2. Stage des fichiers Space (`Dockerfile`, `requirements-deploy.txt`, `src/`, `configs/`, `README_SPACE.md`)
+3. Nettoyage des modules non nécessaires en production (`src/training`, `src/data`, `src/evaluation`)
+4. `huggingface_hub.upload_folder` vers le repo Space (`Marintosti/chsa-triage-api`) avec le SHA du commit
+5. HF Spaces redéploie automatiquement l'image au push
+
+**Secrets gérés via GitHub Actions** :
+- `HF_TOKEN` : token d'accès au Hugging Face Hub (write).
+- En production il faudrait ajouter : `API_KEY` (rotation), credentials du registre Docker on-premise.
 
 ---
 
@@ -406,14 +433,40 @@ Deux workflows :
 | **Accuracy triage P1/P2/P3** | *[TODO]* | *[TODO]* | *[TODO]* | *[TODO]*pts |
 | **BLEU (réponses libres)** | *[TODO]* | *[TODO]* | *[TODO]* | *[TODO]* |
 
-### 7.2 Métriques de latence (sur GPU T4 / L4)
+### 7.2 Métriques de latence
 
-| Métrique | Valeur cible | Valeur mesurée |
-|---|---|---|
-| Latence P50 | < 500 ms | *[TODO]* |
-| Latence P95 | < 1500 ms | *[TODO]* |
-| Throughput (req/s) | > 5 | *[TODO]* |
-| Cold start | < 30 s | *[TODO]* |
+Le bench est exécutable sur n'importe quel endpoint (`scripts/bench_latency.py`). Il mesure la latence côté client (réseau inclus) et côté serveur (rapportée par l'API), calcule p50/p90/p95/p99 et le throughput.
+
+**Commande type** :
+```bash
+API_URL=https://marintosti-chsa-triage-api.hf.space \
+API_KEY=chsa-demo-2026 \
+python scripts/bench_latency.py --requests 100 --concurrency 4 \
+    --output docs/bench_results.json
+```
+
+**Mesure de référence — mode mock local** (sanity check, archivée dans `docs/bench_mock_results.json`, 100 requêtes / concurrency 8) :
+
+| Métrique | Valeur mesurée (mock) |
+|---|---|
+| Throughput | ~927 req/s |
+| Latence client p50 | 6,9 ms |
+| Latence client p95 | 13,0 ms |
+| Latence client p99 | 14,7 ms |
+| Taux d'erreur | 0 % |
+
+Ces chiffres mesurent le coût pur de la stack FastAPI/Pydantic/audit log et confirment qu'aucun goulot ne provient du framework. Ils constituent la borne inférieure (modèle = constante).
+
+**Mesure cible avec modèle réel — GPU T4 / L4 sur HF Spaces** :
+
+| Métrique | Cible POC | Valeur mesurée | Statut |
+|---|---|---|---|
+| Latence serveur P50 | < 500 ms | *À mesurer une fois le merged model déployé* | 🟡 |
+| Latence serveur P95 | < 1500 ms | *À mesurer* | 🟡 |
+| Throughput soutenu | ≥ 5 req/s | *À mesurer* | 🟡 |
+| Cold start | < 30 s | *À mesurer* | 🟡 |
+
+> Note : sur GPU T4 small (HF Spaces) avec un modèle Qwen3-1.7B en `bfloat16`, la littérature et les benchs publics situent la latence par token autour de 25-40 ms, soit ~250-400 ms pour une réponse de triage typique de 80-100 tokens. Le throughput soutenu attendu est dans la zone de 4-8 req/s sur une seule instance, ce qui est compatible avec la cible du POC.
 
 ### 7.3 Analyse clinique qualitative
 
@@ -447,8 +500,10 @@ Deux workflows :
 - Absence de données issues du **SIH réel du CHSA** → le modèle n'a pas été exposé aux spécificités terminologiques internes
 
 **Déploiement** :
-- POC déployé sur une seule instance — pas de haute disponibilité
-- Pas de monitoring production (Prometheus/Grafana) dans le POC
+- POC déployé sur une seule instance HF Space — pas de haute disponibilité ni de load balancing
+- Pas de monitoring production (Prometheus/Grafana, alerting) dans le POC
+- Audit log persistant en JSONL local — adéquat pour le POC, à remplacer par une base de données auditable (PostgreSQL avec WAL, ou stockage immutable type S3 Object Lock) en production
+- Hébergement HF Spaces ≠ certification HDS — migration on-premise ou OVH HDS requise avant tout traitement de données patient réelles (cf. checklist Go/No-Go § 3.9)
 
 **Cliniques** :
 - Pas de validation par un panel de médecins sur des cas réels
@@ -500,6 +555,10 @@ Plan en 3 phases :
 - Déclaration CNIL en tant que traitement sensible de données de santé
 - Comité d'éthique interne pour validation des cas d'usage
 
+### 9.3 bis Checklist Go / No-Go avant Phase pilote
+
+Une checklist Go/No-Go détaillée (sécurité, RGPD, validation clinique, observabilité, rollback) a été produite et doit être validée par la Direction Innovation Médicale, la DSI, le DPO et l'équipe urgences avant tout déploiement clinique. Elle est livrée dans `docs/go_no_go_checklist.md` et compte 7 catégories pour 47 critères, dont 18 NO-GO bloquants à l'issue du POC actuel — concentrés sur la validation clinique (panel d'urgentistes, comité d'éthique), la conformité hébergement HDS, et la gouvernance opérationnelle. Le POC valide en revanche l'ensemble du pipeline data → API → CI/CD.
+
 ### 9.4 Roadmap temporelle
 
 | Horizon | Étapes clés |
@@ -533,16 +592,20 @@ Plan en 3 phases :
 FineLLM/
 ├── configs/              # Configs YAML (SFT, DPO, déploiement)
 ├── data/                 # Données locales (raw + processed + splits)
-├── docs/                 # Data card + rapport technique
+├── docs/                 # Data card, rapport technique, checklist Go/No-Go, demo HTML
 ├── notebooks/
 │   ├── 01_data_preparation.ipynb
 │   └── 02_training.ipynb
+├── scripts/
+│   ├── demo_api.py       # Démo CLI (3 cas P1/P2/P3)
+│   ├── bench_latency.py  # Bench p50/p95/p99 + throughput
+│   └── serve_local.sh    # Démarrage local de l'API
 ├── src/
 │   ├── data/             # Scripts de préparation
 │   ├── training/         # Logique SFT/DPO
 │   ├── evaluation/       # Métriques + benchmarks
-│   └── deployment/       # serve.py API FastAPI + vLLM
-├── tests/                # Tests pytest
+│   └── deployment/       # serve.py API FastAPI + vLLM (+ audit JSONL)
+├── tests/                # Tests pytest (8 tests, mode mock CI)
 ├── .github/workflows/    # CI (lint/test/build) + deploy (HF Space)
 ├── Dockerfile            # Image de déploiement
 └── pyproject.toml        # Dépendances Poetry

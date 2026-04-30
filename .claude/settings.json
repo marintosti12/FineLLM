@@ -1,7 +1,29 @@
 {
   "permissions": {
     "allow": [
-      "Bash(PYTHONPATH=. USE_VLLM=0 python -m pytest tests/test_serve.py -q)"
+      "Bash(PYTHONPATH=. USE_VLLM=0 python -m pytest tests/test_serve.py -q)",
+      "Bash(curl -sS -X POST https://marintosti-chsa-triage-api.hf.space/triage -H 'Content-Type: application/json' -H 'X-API-Key: 123456' --max-time 90 -d '{ *)",
+      "Bash(curl -sS https://marintosti-chsa-triage-api.hf.space/health)",
+      "Bash(curl -sS -o /dev/null -w \"HTTP %{http_code}\\\\n\" https://marintosti-chsa-triage-api.hf.space/)",
+      "Bash(curl -sS -X POST https://marintosti-chsa-triage-api.hf.space/triage -H 'Content-Type: application/json' -H 'X-API-Key: 123456' -o /tmp/response.txt -w 'HTTP %{http_code} | taille: %{size_download} octets\\\\n' -d '{\"symptoms\":\"test\"}' --max-time 60)",
+      "Read(//tmp/**)",
+      "Bash(curl -sS https://marintosti-chsa-triage-api.hf.space/health -w \"\\\\nHTTP %{http_code}\\\\n\" --max-time 30)",
+      "Bash(curl -sS https://marintosti-chsa-triage-api.hf.space/health --max-time 30)",
+      "Bash(apt list *)",
+      "Bash(pip show *)",
+      "Bash(pip install *)",
+      "Bash(.venv/bin/python -m pytest tests/test_serve.py -q)",
+      "Bash(AUDIT_LOG_PATH=\"\" USE_VLLM=0 .venv/bin/python -m uvicorn src.deployment.serve:app --host 127.0.0.1 --port 8765 --log-level warning)",
+      "Bash(curl -fs http://127.0.0.1:8765/health)",
+      "Bash(.venv/bin/python scripts/bench_latency.py --url http://127.0.0.1:8765 --requests 50 --concurrency 4 --warmup 2)",
+      "Bash(.venv/bin/python scripts/bench_latency.py --url http://127.0.0.1:8765 --requests 100 --concurrency 8 --warmup 5 --output docs/bench_mock_results.json)",
+      "Bash(kill %1)",
+      "Bash(pkill -f \"uvicorn src.deployment.serve\")",
+      "Bash(.venv/bin/python -m ruff check src/deployment tests/test_serve.py scripts/bench_latency.py)",
+      "Bash(.venv/bin/python -c \"import huggingface_hub, peft, transformers, torch; print\\('hf_hub:', huggingface_hub.__version__\\); print\\('peft:', peft.__version__\\); print\\('transformers:', transformers.__version__\\); print\\('torch:', torch.__version__\\); print\\('cuda:', torch.cuda.is_available\\(\\)\\)\")"
+    ],
+    "additionalDirectories": [
+      "/tmp"
     ]
   }
 }

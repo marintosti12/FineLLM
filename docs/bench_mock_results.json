@@ -1,0 +1,35 @@
+{
+  "total_requests": 100,
+  "success": 100,
+  "errors": 0,
+  "error_rate": 0.0,
+  "wall_time_s": 0.11,
+  "throughput_rps": 927.43,
+  "client_count": 100,
+  "client_min_ms": 2.7,
+  "client_p50_ms": 6.9,
+  "client_p90_ms": 10.8,
+  "client_p95_ms": 13.0,
+  "client_p99_ms": 14.7,
+  "client_max_ms": 15.8,
+  "client_mean_ms": 7.4,
+  "server_count": 100,
+  "server_min_ms": 0.0,
+  "server_p50_ms": 0.0,
+  "server_p90_ms": 0.0,
+  "server_p95_ms": 0.0,
+  "server_p99_ms": 0.0,
+  "server_max_ms": 0.1,
+  "server_mean_ms": 0.0,
+  "priority_distribution": {
+    "P2 - URGENCE MODEREE": 100
+  },
+  "sample_errors": [],
+  "config": {
+    "url": "http://127.0.0.1:8765",
+    "requests": 100,
+    "concurrency": 8,
+    "warmup": 5
+  },
+  "timestamp": "2026-04-30T12:56:02Z"
+}

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import tempfile
 import time
 
 import pytest
@@ -12,14 +14,20 @@ from fastapi.testclient import TestClient
 os.environ.pop("MODEL_ID", None)
 os.environ["USE_VLLM"] = "0"
 os.environ.pop("API_KEY", None)
+# Audit log persiste dans un fichier temporaire pendant les tests
+_AUDIT_TMP = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False)
+_AUDIT_TMP.close()
+os.environ["AUDIT_LOG_PATH"] = _AUDIT_TMP.name
 
 from src.deployment.serve import app, audit_log  # noqa: E402
 
 
 @pytest.fixture
 def client():
+    # Vide le fichier d'audit + la liste en memoire avant chaque test
+    open(_AUDIT_TMP.name, "w").close()
+    audit_log.clear()
     with TestClient(app) as c:
-        audit_log.clear()
         yield c
 
 
@@ -83,6 +91,20 @@ def test_latency_threshold(client):
     elapsed_ms = (time.perf_counter() - t0) * 1000
     assert r.status_code == 200
     assert elapsed_ms < 500, f"Latence trop elevee: {elapsed_ms:.0f} ms"
+
+
+def test_audit_persisted_to_jsonl(client):
+    """L'audit log doit etre persiste sur disque (append-only JSONL) pour survivre au redemarrage."""
+    r = client.post("/triage", json={"symptoms": "douleur thoracique", "patient_id": "PERSIST-001"})
+    assert r.status_code == 200
+
+    with open(os.environ["AUDIT_LOG_PATH"], encoding="utf-8") as f:
+        lines = [json.loads(line) for line in f if line.strip()]
+    assert len(lines) == 1
+    assert lines[0]["patient_id"] == "PERSIST-001"
+    assert lines[0]["interaction_id"]
+    assert lines[0]["timestamp"]
+    assert "priority_level" in lines[0]
 
 
 def test_api_key_enforcement(monkeypatch):

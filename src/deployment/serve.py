@@ -15,13 +15,17 @@ Variables d'environnement:
 - USE_VLLM        : "1" pour charger vLLM, "0" pour transformers/mock (default: "1")
 - API_KEY         : si defini, exige le header X-API-Key
 - PORT            : port d'ecoute (default: 7860 - requis par HF Spaces)
+- AUDIT_LOG_PATH  : chemin du fichier JSONL append-only pour la tracabilite RGPD
+                    (default: audit/audit.jsonl). Mettre vide pour desactiver.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -47,10 +51,52 @@ MODEL_ID = os.environ.get("MODEL_ID", "").strip()
 ADAPTER_ID = os.environ.get("ADAPTER_ID", "").strip()
 USE_VLLM = os.environ.get("USE_VLLM", "1") == "1"
 API_KEY = os.environ.get("API_KEY", "").strip()
+AUDIT_LOG_PATH = os.environ.get("AUDIT_LOG_PATH", str(PROJECT_ROOT / "audit" / "audit.jsonl")).strip()
 
 # Etat global du backend
 _backend: dict[str, Any] = {"kind": "mock", "engine": None, "tokenizer": None}
 audit_log: list[dict] = []
+_audit_lock = threading.Lock()
+
+
+def _persist_audit_entry(entry: dict) -> None:
+    """Append-only JSONL pour la tracabilite RGPD (relisible apres redemarrage).
+
+    Sans persistance, l'audit log est perdu au redeploiement, ce qui n'est pas
+    acceptable pour un audit medical.
+    """
+    if not AUDIT_LOG_PATH:
+        return
+    try:
+        path = Path(AUDIT_LOG_PATH)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(entry, ensure_ascii=False)
+        with _audit_lock, open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError as exc:
+        logger.warning("Echec persistance audit (%s): %s", AUDIT_LOG_PATH, exc)
+
+
+def _load_audit_history() -> None:
+    """Recharge l'historique au demarrage pour exposer un audit complet via /audit."""
+    if not AUDIT_LOG_PATH:
+        return
+    path = Path(AUDIT_LOG_PATH)
+    if not path.exists():
+        return
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    audit_log.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        logger.info("Audit log charge: %d entrees depuis %s", len(audit_log), path)
+    except OSError as exc:
+        logger.warning("Echec lecture audit (%s): %s", path, exc)
 
 
 def _load_vllm(model_id: str) -> None:
@@ -101,6 +147,7 @@ def _load_transformers(model_id: str, adapter_id: str = "") -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _load_audit_history()
     if not MODEL_ID:
         logger.warning("MODEL_ID non defini - mode mock (echo) active")
     else:
@@ -363,17 +410,17 @@ async def triage(req: TriageRequest):
         backend=_backend["kind"],
     )
 
-    audit_log.append(
-        {
-            "interaction_id": interaction_id,
-            "timestamp": timestamp,
-            "patient_id": req.patient_id,
-            "symptoms": req.symptoms,
-            "priority_level": priority,
-            "latency_ms": response.latency_ms,
-            "backend": _backend["kind"],
-        }
-    )
+    entry = {
+        "interaction_id": interaction_id,
+        "timestamp": timestamp,
+        "patient_id": req.patient_id,
+        "symptoms": req.symptoms,
+        "priority_level": priority,
+        "latency_ms": response.latency_ms,
+        "backend": _backend["kind"],
+    }
+    audit_log.append(entry)
+    _persist_audit_entry(entry)
     logger.info("Triage %s -> %s (%.0f ms)", interaction_id, priority, latency_ms)
     return response
 

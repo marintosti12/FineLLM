@@ -6,13 +6,13 @@ uvicorn[standard]==0.34.0
 pydantic==2.10.4
 pyyaml==6.0.2
 
-# Backend d'inference — transformers (avec support Qwen3 >= 4.51).
-# vLLM retire du POC : incompatible avec transformers 4.51+ et non requis en mode transformers.
-# Pour ajouter vLLM en prod : bumper aussi vllm vers >= 0.7 (support Qwen3).
-transformers>=4.51,<5
+# Backend d'inference vLLM (Qwen3 supporte depuis vllm 0.7).
+# vllm 0.7.x impose torch 2.5 et transformers 4.51-4.52.
+vllm>=0.7,<0.8
+transformers>=4.51,<4.53
 accelerate>=1.2
 peft>=0.14
 huggingface_hub>=0.27
-torch>=2.4
+torch>=2.5,<2.6
 safetensors>=0.4.5
 sentencepiece>=0.2
