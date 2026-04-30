@@ -6,7 +6,9 @@ vllm:
   tensor_parallel_size: 1
   max_model_len: 2048
   gpu_memory_utilization: 0.9
-  dtype: "bfloat16"
+  # T4 (compute capability 7.5) ne supporte pas bfloat16. Float16 OK sur T4 et A10/L4.
+  # Pour passer en bfloat16 (precision legerement meilleure), il faut un GPU >= Ampere (L4, A100, H100).
+  dtype: "float16"
 
 inference:
   temperature: 0.3
