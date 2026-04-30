@@ -274,27 +274,52 @@ def clean_response(raw: str) -> str:
     return raw.strip()
 
 
-def parse_triage_response(raw: str) -> tuple[str, str, str]:
-    """Nettoie puis detecte le niveau de priorite dans la reponse."""
-    cleaned = clean_response(raw)
-    upper = cleaned.upper()
+_PRIORITY_LABELS = {
+    "P1": "P1 - URGENCE MAXIMALE",
+    "P2": "P2 - URGENCE MODEREE",
+    "P3": "P3 - URGENCE DIFFEREE",
+}
 
-    # Detection du niveau de priorite (mots-cles + mentions explicites P1/P2/P3)
-    if ("P1" in upper
-        or "URGENCE MAXIMALE" in upper
-        or "PRONOSTIC VITAL" in upper
-        or "INFARCTUS" in upper
-        or "CHOC ANAPHYLACTIQUE" in upper):
+# Mention explicite emise par le modele apres SFT/DPO. On match en priorite
+# ces patterns pour eviter les faux positifs sur des mentions hypothetiques
+# (ex : "qui mettraient en danger le pronostic vital").
+_EXPLICIT_PRIORITY_RE = re.compile(
+    r"(?:NIVEAU\s+DE\s+)?PRIORIT[EÉ]\s*[:\-]?\s*\**\s*(P[123])\b",
+    re.IGNORECASE,
+)
+# Fallback : premiere occurrence isolee de Px dans la reponse.
+_PX_RE = re.compile(r"\bP([123])\b")
+
+
+def parse_triage_response(raw: str) -> tuple[str, str, str]:
+    """Nettoie puis detecte le niveau de priorite dans la reponse.
+
+    Strategie :
+    1. Mention explicite "Niveau de Priorite : Px" / "Priorite : Px" (sortie SFT/DPO standard).
+    2. Premiere occurrence isolee de P1 / P2 / P3 dans la reponse.
+    3. Fallback heuristique sur des mots-cles non ambigus (uniquement si aucune mention explicite).
+    """
+    cleaned = clean_response(raw)
+
+    # 1. Mention explicite (case-insensitive)
+    m = _EXPLICIT_PRIORITY_RE.search(cleaned)
+    if m:
+        return _PRIORITY_LABELS[m.group(1).upper()], cleaned, ""
+
+    # 2. Premiere occurrence isolee de Px
+    m = _PX_RE.search(cleaned)
+    if m:
+        return _PRIORITY_LABELS["P" + m.group(1)], cleaned, ""
+
+    # 3. Fallback mots-cles (utilise uniquement si le modele n'a pas formate la priorite).
+    #    On retire "PRONOSTIC VITAL" qui genere des faux positifs en contexte hypothetique
+    #    ("qui mettrait en danger le pronostic vital").
+    upper = cleaned.upper()
+    if "URGENCE MAXIMALE" in upper:
         priority = "P1 - URGENCE MAXIMALE"
-    elif ("P2" in upper
-          or "URGENCE MODEREE" in upper
-          or "URGENCE MODÉRÉE" in upper
-          or "PRISE EN CHARGE RAPIDE" in upper):
+    elif "URGENCE MODEREE" in upper or "URGENCE MODÉRÉE" in upper:
         priority = "P2 - URGENCE MODEREE"
-    elif ("P3" in upper
-          or "URGENCE DIFFEREE" in upper
-          or "URGENCE DIFFÉRÉE" in upper
-          or "CONSULTATION PROGRAMMABLE" in upper):
+    elif "URGENCE DIFFEREE" in upper or "URGENCE DIFFÉRÉE" in upper:
         priority = "P3 - URGENCE DIFFEREE"
     else:
         priority = "NON DETERMINE"
